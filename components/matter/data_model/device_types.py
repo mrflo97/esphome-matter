@@ -2,7 +2,6 @@ import json
 import logging
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import ClassVar
 
 import esphome.config_validation as cv
 from esphome import automation
@@ -19,51 +18,40 @@ from ..const import (
 from ..util import maybe_empty
 from .attributes import SENSOR_ATTRIBUTES, SensorAttribute
 from .clusters import CLUSTERS_BY_ID, CLUSTERS_BY_NAME, Cluster, Feature
+from .conformance import Conformance
 from .units import percentage
 
 _LOGGER = logging.getLogger(__name__)
-_DEVICE_TYPES_FILE = Path(__file__).resolve().parent / "device_types.json"
 
 
-def _parse_cluster_include(data: dict) -> Cluster:
-    cluster = CLUSTERS_BY_ID[data["id"]]
-    required = data.get("required", False)
-    mandatory_features = set()
-    disallowed_features = set()
-    for code, conformance in data.get("features", {}).items():
-        if conformance == "mandatory":
-            mandatory_features.add(code)
-        elif conformance == "disallowed":
-            disallowed_features.add(code)
+def _parse_cluster_include(cluster_id: int, data: dict) -> Cluster:
+    cluster = CLUSTERS_BY_ID[cluster_id]
+    include_conformance = {
+        code: Conformance.from_dict(feature_data.get("conformance"))
+        for code, feature_data in data.get("features", {}).items()
+    }
 
-    def _replace(f):
-        if f.code in mandatory_features:
-            return replace(f, mandatory=True)
-        elif f.code in disallowed_features:
-            return replace(f, disallowed=True)
-        else:
-            return f
+    def compose(feature: Feature) -> Feature:
+        refinement = include_conformance.get(feature.code)
+        if refinement is None:
+            return feature
+        conformance = (
+            feature.conformance.compose(refinement)
+            if feature.conformance is not None
+            else refinement
+        )
+        return replace(feature, conformance=conformance)
 
-    features = []
-    choice_features = []
-    for feature in cluster.features:
-        features.append(_replace(feature))
-    for choice in cluster.choice_features:
-        new_choice_features = []
-        for feature in choice.features:
-            new_choice_features.append(_replace(feature))
-        # Remove choice features if device type already solves the choice by enabling any of the choice features.
-        if not any(feature.mandatory for feature in new_choice_features):
-            choice_features.append(replace(choice, features=tuple(new_choice_features)))
-        else:
-            features.extend(new_choice_features)
+    features = tuple(compose(feature) for feature in cluster.features)
 
-    # TODO: also update attribute and command info
+    # TODO: also update attribute, command and event info
     return replace(
         cluster,
-        required=required,
-        features=tuple(features),
-        choice_features=tuple(choice_features),
+        features=features,
+        server=data.get("server", False),
+        client=data.get("client", False),
+        server_locked=data.get("server_locked", False),
+        client_locked=data.get("client_locked", False),
     )
 
 
@@ -71,16 +59,19 @@ def _parse_cluster_include(data: dict) -> Cluster:
 class DeviceType:
     id: int
     name: str  # snake_case
-    server_clusters: tuple[Cluster, ...] = ()
+    clusters: tuple[Cluster, ...] = ()
     sensor_attributes: tuple[SensorAttribute, ...] = ()
 
     @classmethod
-    def from_dict(cls, data: dict):
-        server_clusters = tuple(
-            [_parse_cluster_include(c) for c in data["server_clusters"]]
+    def from_dict(cls, device_type_id: int, data: dict):
+        clusters = tuple(
+            _parse_cluster_include(int(cluster_id), cluster_data)
+            for cluster_id, cluster_data in data["clusters"].items()
         )
         sensor_attributes = []
-        for cluster in server_clusters:
+        for cluster in clusters:
+            if cluster.server_locked and not cluster.server:
+                continue
             for attribute_name, sensor_attribute in SENSOR_ATTRIBUTES.get(
                 cluster.name, {}
             ).items():
@@ -94,8 +85,8 @@ class DeviceType:
 
         return cls(
             name=data["name"],
-            id=data["id"],
-            server_clusters=server_clusters,
+            id=device_type_id,
+            clusters=clusters,
             sensor_attributes=tuple(sensor_attributes),
         )
 
@@ -107,6 +98,22 @@ class DeviceType:
     @property
     def conf_key(self) -> str:
         return self.name
+
+    @property
+    def server_clusters(self) -> tuple[Cluster, ...]:
+        return tuple(
+            cluster
+            for cluster in self.clusters
+            if cluster.server or not cluster.server_locked
+        )
+
+    @property
+    def client_clusters(self) -> tuple[Cluster, ...]:
+        return tuple(
+            cluster
+            for cluster in self.clusters
+            if cluster.client or not cluster.client_locked
+        )
 
     def get_features(self) -> set[Feature]:
         """Get all features that the clusters of this device type supports."""
@@ -146,6 +153,17 @@ class DeviceType:
         if self.name.endswith("light"):
             schema[cv.Optional(CONF_LIGHT_ID)] = cv.use_id(light.LightState)
 
+        if self.name == "window_covering":
+            schema[cv.Optional(CONF_COVER_ID)] = cv.use_id(cover.Cover)
+            schema[cv.Optional(CONF_END_PRODUCT_TYPE)] = cv.enum(
+                {
+                    "roller_shade": 0x00,
+                    "interior_venetian_blind": 0x0C,
+                    "exterior_venetian_blind": 0x0D,
+                },
+                lower=True,
+            )
+
         if self.name.endswith("light") and any(
             cluster.name == "LevelControl" and cluster.required
             for cluster in self.server_clusters
@@ -165,117 +183,9 @@ class DeviceType:
 
         return schema
 
-    def config_lines(self, config: dict, config_var: str) -> list[str]:
-        """Return device-type-specific C++ config assignments."""
-        return []
-
-    def config_constructor_args(self, config: dict) -> list[str]:
-        """Return arguments for the esp-matter device config constructor."""
-        return []
-
     def schema(self):
         # TODO: only maybe_empty if there are no clusters or features for which a mandatory choice must be made.
         return maybe_empty(self._schema())
-
-
-class WindowCoveringDeviceType(DeviceType):
-    """Window Covering schema for an optional ESPHome cover mapping.
-
-    Unmapped Window Covering endpoints retain the generic schema. A mapped
-    endpoint is deliberately narrower: ESPHome covers expose normalized
-    percentage positions, not absolute physical measurements.
-    """
-
-    _LIFT_FEATURES = frozenset(("lift", "position_aware_lift"))
-    _VENETIAN_FEATURES = _LIFT_FEATURES | frozenset(
-        ("tilt", "position_aware_tilt")
-    )
-    _END_PRODUCT_TYPES: ClassVar[dict[str, int]] = {
-        "roller_shade": 0x00,
-        "interior_venetian_blind": 0x0C,
-        "exterior_venetian_blind": 0x0D,
-    }
-
-    def _schema(self):
-        schema = super()._schema()
-        schema[cv.Optional(CONF_COVER_ID)] = cv.use_id(cover.Cover)
-        schema[cv.Optional(CONF_END_PRODUCT_TYPE)] = cv.one_of(
-            *self._END_PRODUCT_TYPES, lower=True
-        )
-        return schema
-
-    def schema(self):
-        return cv.All(super().schema(), self._validate_features)
-
-    def _validate_features(self, config: dict) -> dict:
-        # Generic endpoints can also configure features through clusters.
-        # Restrict only mapped covers, whose capabilities belong to one backend.
-        if CONF_COVER_ID not in config:
-            return config
-        features = frozenset(config.get(CONF_WITH_FEATURES, ()))
-
-        dependencies = {
-            "position_aware_lift": "lift",
-            "position_aware_tilt": "tilt",
-        }
-        for feature, required_feature in dependencies.items():
-            if feature in features and required_feature not in features:
-                raise cv.Invalid(
-                    f"Window Covering feature {feature} requires {required_feature}"
-                )
-
-        if "absolute_position" in features:
-            raise cv.Invalid(
-                "Mapped ESPHome covers use normalized percentage positions; "
-                "absolute_position is not supported"
-            )
-
-        supported = (self._LIFT_FEATURES, self._VENETIAN_FEATURES)
-        if features not in supported:
-            raise cv.Invalid(
-                "A mapped Window Covering must enable either lift + "
-                "position_aware_lift, or lift + position_aware_lift + tilt + "
-                "position_aware_tilt"
-            )
-
-        end_product_type = config.get(CONF_END_PRODUCT_TYPE)
-        if features == self._LIFT_FEATURES:
-            if end_product_type not in (None, "roller_shade"):
-                raise cv.Invalid(
-                    "A lift-only mapped Window Covering must use "
-                    "end_product_type: roller_shade"
-                )
-            config[CONF_END_PRODUCT_TYPE] = "roller_shade"
-        else:
-            if end_product_type is None:
-                config[CONF_END_PRODUCT_TYPE] = "interior_venetian_blind"
-            elif end_product_type == "roller_shade":
-                raise cv.Invalid(
-                    "A lift-and-tilt mapped Window Covering must use an "
-                    "interior or exterior Venetian blind end product type"
-                )
-
-        return config
-
-    def config_lines(self, config: dict, config_var: str) -> list[str]:
-        if CONF_COVER_ID not in config:
-            return []
-
-        features = frozenset(config[CONF_WITH_FEATURES])
-        # Matter Window Covering Type: RollerShade=0x00,
-        # TiltBlindLiftAndTilt=0x08.
-        window_covering_type = (
-            0x08 if features == self._VENETIAN_FEATURES else 0x00
-        )
-        return [
-            f"{config_var}.window_covering.type = 0x{window_covering_type:02X};",
-        ]
-
-    def config_constructor_args(self, config: dict) -> list[str]:
-        if CONF_END_PRODUCT_TYPE not in config:
-            return []
-        end_product_type = self._END_PRODUCT_TYPES[config[CONF_END_PRODUCT_TYPE]]
-        return [f"0x{end_product_type:02X}"]
 
 
 # class ElectricalSensor(DeviceType):
@@ -317,24 +227,25 @@ class WindowCoveringDeviceType(DeviceType):
 
 
 DEVICE_TYPE_OVERRIDES = {
-    "window_covering": WindowCoveringDeviceType,
     # "electrical_sensor": ElectricalSensor,
 }
 
 
 def _load_device_types(
-    device_types_file: Path = _DEVICE_TYPES_FILE,
+    device_types_file: Path = Path(__file__).resolve().parent / "device_types.json",
 ) -> tuple[DeviceType, ...]:
     device_types: list[DeviceType] = []
 
     with open(device_types_file, "r") as file:
         contents = json.load(file)
 
-    for device_type_data in contents:
+    for device_type_id, device_type_data in contents.items():
         device_type_class = DEVICE_TYPE_OVERRIDES.get(
             device_type_data["name"], DeviceType
         )
-        device_types.append(device_type_class.from_dict(device_type_data))
+        device_types.append(
+            device_type_class.from_dict(int(device_type_id), device_type_data)
+        )
 
     return tuple(device_types)
 

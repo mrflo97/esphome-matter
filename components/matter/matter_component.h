@@ -4,9 +4,7 @@
 #ifdef USE_MATTER
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
-#ifdef USE_MATTER_TEXT_SENSOR
-#include "esphome/components/text_sensor/text_sensor.h"
-#endif
+#include "matter_text_sensors.h"
 
 #include "matter_attributes.h"
 #include "matter_covers.h"
@@ -35,16 +33,22 @@ public:
   }
 
   void factory_reset();
-  void open_commissioning_window(uint16_t timeout_seconds);
-  void close_commissioning_window();
 
-#ifdef USE_MATTER_TEXT_SENSOR
+#ifdef USE_TEXT_SENSOR
   void set_manual_pairing_code_sensor(text_sensor::TextSensor *sensor) {
     this->manual_pairing_code_sensor_ = sensor;
   }
   void set_qr_code_sensor(text_sensor::TextSensor *sensor) {
     this->qr_code_sensor_ = sensor;
   }
+  void set_fabric_compressed_id_sensor(size_t slot,
+                                       text_sensor::TextSensor *sensor);
+  void set_fabric_id_sensor(size_t slot, text_sensor::TextSensor *sensor);
+  void set_fabric_label_sensor(size_t slot, text_sensor::TextSensor *sensor);
+  void set_fabric_node_id_sensor(size_t slot, text_sensor::TextSensor *sensor);
+  void set_fabric_vendor_id_sensor(size_t slot,
+                                   text_sensor::TextSensor *sensor);
+  void schedule_fabric_sensor_update();
 #endif
 
   // Register Matter endpoints
@@ -70,14 +74,12 @@ public:
   std::vector<MatterAttributeTriggerBase *> attribute_triggers_;
 
   // Register ESPHome entities
+#ifdef USE_COVER
+  void register_cover(cover::Cover *cover, uint16_t endpoint_id);
+#endif // USE_COVER
 #ifdef USE_LIGHT
   void register_light(light::LightState *light, uint16_t endpoint_id);
 #endif // USE_LIGHT
-#ifdef USE_COVER
-  void map_cover_to_endpoint(cover::Cover *cover, uint16_t endpoint_id, bool supports_tilt);
-  void cancel_cover_pending_commands(cover::Cover *cover);
-  MatterCoverMapping *get_cover_mapping(cover::Cover *cover);
-#endif // USE_COVER
 #ifdef USE_SENSOR
   void register_sensor_attribute(sensor::Sensor *sensor, uint16_t endpoint_id,
                                  uint32_t cluster_id, uint32_t attribute_id,
@@ -112,28 +114,26 @@ public:
   }
 
 private:
-  bool validate_mappings_();
   void generate_commissioning_codes_();
-
   // Defined in matter_endpoints.cpp
   bool create_endpoints_(esp_matter::node_t *node);
   void initialize_endpoint_mappings_();
 
   uint16_t discriminator_{0};
   uint32_t passcode_{0};
-  bool matter_started_{false};
   std::string manual_pairing_code_;
   std::string qr_code_;
-#ifdef USE_MATTER_TEXT_SENSOR
+#ifdef USE_TEXT_SENSOR
   text_sensor::TextSensor *manual_pairing_code_sensor_{nullptr};
   text_sensor::TextSensor *qr_code_sensor_{nullptr};
+  std::vector<MatterFabricSensorRegistration> fabric_sensors_;
+  MatterFabricSensorRegistration &get_fabric_sensors_(size_t slot);
+  void publish_commissioning_code_sensors_();
+  void publish_fabric_sensors_();
 #endif
 
   std::vector<MatterEndpointRegistration> endpoint_registrations_;
   std::vector<MatterEndpointMappingBase *> mappings_;
-#ifdef USE_COVER
-  std::vector<MatterCoverMapping *> cover_mappings_;
-#endif // USE_COVER
   std::vector<MatterAttributeCallbackRegistration> attribute_callbacks_;
 };
 
@@ -146,43 +146,6 @@ class MatterFactoryResetAction : public Action<Ts...>,
 public:
   void play(Ts... x) override { this->parent_->factory_reset(); }
 };
-
-template <typename... Ts>
-class MatterOpenCommissioningWindowAction : public Action<Ts...>,
-                                           public Parented<MatterComponent> {
-public:
-  void set_timeout(uint16_t timeout_seconds) {
-    this->timeout_seconds_ = timeout_seconds;
-  }
-  void play(Ts... x) override {
-    this->parent_->open_commissioning_window(this->timeout_seconds_);
-  }
-
-protected:
-  uint16_t timeout_seconds_{900};
-};
-
-template <typename... Ts>
-class MatterCloseCommissioningWindowAction : public Action<Ts...>,
-                                            public Parented<MatterComponent> {
-public:
-  void play(Ts... x) override { this->parent_->close_commissioning_window(); }
-};
-
-#ifdef USE_COVER
-template <typename... Ts>
-class MatterCancelCoverPendingAction final : public Action<Ts...>, public Parented<MatterComponent> {
- public:
-  void set_cover(cover::Cover *cover) { this->cover_ = cover; }
-
-  void play(Ts... x) override {
-    this->parent_->cancel_cover_pending_commands(this->cover_);
-  }
-
- protected:
-  cover::Cover *cover_{nullptr};
-};
-#endif // USE_COVER
 
 } // namespace esphome::matter
 

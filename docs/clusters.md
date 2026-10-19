@@ -14,13 +14,4 @@ This cluster is present on almost all device types. The `Identify` command can b
 
 # Switch clusters
 
-# Cover clusters
-
-## WindowCovering
-
-This cluster reports current and target lift/tilt positions and movement status.
-An ESPHome `cover_id` mapping accepts open, close, Stop, and percentage targets.
-See [covers](covers.md) for mapping and position reporting, or the
-[command reference](generated/commands.md#windowcovering) for outgoing commands.
-
 # Other

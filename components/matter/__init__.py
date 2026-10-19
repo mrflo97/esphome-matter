@@ -13,6 +13,9 @@ from esphome.const import (
     CONF_ID,
     Framework,
 )
+from esphome.const import (
+    __version__ as ESPHOME_VERSION,
+)
 from esphome.core import CORE, HexInt
 from esphome.coroutine import CoroPriority, coroutine_with_priority
 from esphome.types import ConfigType
@@ -21,11 +24,10 @@ from .actions import register_bound_command_actions
 from .const import *
 from .endpoints import (
     ENDPOINT_SCHEMA,
-    light_restore_warning,
+    build_endpoints,
     register_endpoints,
 )
 from .types import MatterComponent
-from .validation import validate_cancel_pending_actions, validate_cover_mappings
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,6 +39,7 @@ AUTO_LOAD = ["network"]
 
 MIN_ESPHOME_THREAD_VERSION = "2026.6.0"
 MIN_ESPHOME_IDF_TOOLCHAIN_VERSION = "2026.9.0"
+ESP_MATTER_VERSION = "1.6.0~2"
 
 # Matter spec section 5.1.7.1: these passcodes are explicitly forbidden.
 _FORBIDDEN_PASSCODES = {
@@ -124,7 +127,7 @@ CONFIG_SCHEMA = cv.All(
             # Product name
             cv.Optional(
                 CONF_PRODUCT_NAME,
-                default=lambda: _truncate(CORE.name, 32),
+                default=_truncate(CORE.name, 32),
             ): cv.All(cv.string_strict, cv.Length(min=1, max=32)),
             # Product ID
             cv.Optional(CONF_PRODUCT_ID): cv.int_range(min=1, max=0xFFFE),
@@ -162,9 +165,8 @@ def _final_validate(config: dict):
             "Please set `enable_ipv6: true` in the `network` configuration."
         )
 
-    light_restore_warning(config, full_config)
-    validate_cover_mappings(config, full_config)
-    validate_cancel_pending_actions(full_config)
+    # Should be done during validation instead of codegen to make sure an invalid config fails early.
+    build_endpoints(config, full_config)
 
 
 FINAL_VALIDATE_SCHEMA = _final_validate
@@ -189,15 +191,9 @@ async def to_code(config: ConfigType):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
 
-    # Register endpoint IDs globally for later use by actions, etc...
-    CORE.data.setdefault(CONF_MATTER, {})[KEY_ENDPOINT_ID_MAP] = {
-        endpoint_config[CONF_ID]: endpoint_id
-        for endpoint_id, endpoint_config in config.get(CONF_ENDPOINTS, {}).items()
-    }
-
     add_idf_component(
         name="davidvtwout/esp_matter",
-        ref="1.6.0~2",
+        ref=ESP_MATTER_VERSION,
     )
 
     cg.add_define("USE_MATTER")

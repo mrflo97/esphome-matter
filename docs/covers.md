@@ -1,117 +1,55 @@
 # Covers
 
-The `window_covering` device type exposes an existing ESPHome cover to Matter.
-It supports lift position, Stop, and optional tilt control for Venetian blinds.
-The existing cover (the backend) still handles motor control, calibration,
-relay interlocking, and protection.
-
-## Configuration
-
-The backend must report position and support Stop. Use its ID as `cover_id`:
+Expose an existing ESPHome cover through a Matter `window_covering` endpoint:
 
 ```yaml
 matter:
   endpoints:
     1:
       window_covering:
-        cover_id: blind_backend
+        cover_id: my_cover
         with_features:
-          - lift
           - position_aware_lift
 ```
 
-For a Venetian blind, the backend must also support tilt. Replace `with_features`
-under `window_covering` with all four features:
+Use the ID of a cover that reports position and supports Stop. For tilt control,
+add `position_aware_tilt` and use a cover that supports tilt. The shared Matter
+conformance resolver enables the corresponding `lift` and `tilt` features;
+features can also be declared under the endpoint's `clusters.window_covering`.
+Tilt-only covers can use `position_aware_tilt` alone. Absolute physical positions
+are unsupported because ESPHome covers expose normalized percentages.
 
-```yaml
-with_features:
-  - lift
-  - position_aware_lift
-  - tilt
-  - position_aware_tilt
-```
+`end_product_type` is optional: `roller_shade`, `interior_venetian_blind`, or
+`exterior_venetian_blind`. The default is `roller_shade` for lift-only mappings
+and `interior_venetian_blind` when tilt is enabled.
 
-### Configuration variables
+Matter commands call the existing cover directly. The cover remains available
+through ESPHome's native API, web server, and ordinary cover automations; it
+does not need `internal: true` or a second control entity. Use normal
+`cover.stop`, `cover.control`, and other ESPHome cover actions on its ID.
+Motor timing, calibration, interlocking, and command interruption belong to
+the cover implementation. A tilt command during lift follows that backend's
+behavior; the Matter adapter does not wait for lift completion or queue tilt.
 
-- **cover_id** (**Required**, ID): The existing ESPHome cover to expose. Each
-  backend can be mapped to one endpoint.
-- **with_features** (**Required**, list): One of the two combinations above.
-  Absolute positions and tilt-only mappings are not supported.
-- **end_product_type** (*Optional*, string): Describes the cover to Matter
-  controllers. Defaults to `roller_shade` for lift only, or
-  `interior_venetian_blind` for lift and tilt. A lift-and-tilt cover can also use
-  `exterior_venetian_blind`. This option does not enable tilt by itself.
+Backend state publications update Matter's current lift/tilt positions. ESPHome
+exposes one movement operation: it is reported on lift when present, or tilt
+for tilt-only covers, and Matter derives the overall status. Once the cover
+reports idle, its actual positions also update the Matter targets. ESPHome does
+not expose native command targets,
+so API or local destinations are not reported to Matter while moving.
+Initialization reports the existing state without moving the cover.
 
-For an existing Shelly 2PM Gen4 configuration, see the
-[Dashboard guide](dashboard-covers.md) and
-[device example](../examples/shelly-2pm-gen4-venetian-blind.yaml).
+ESPHome uses `1.0` for open and `0.0` for closed. Matter uses `0` for open and
+`10000` for closed. Both lift and tilt percentages are converted automatically;
+verify the physical slat orientation for the selected backend.
 
-## Native ESPHome control
+If commands stop working after a firmware update, first confirm that the device
+still advertises its operational `_matter._tcp` service; see
+[Thread debugging](dev/thread-debugging.md#commissioned-devices-after-reboot).
+A controller that cached an incompatible accessory model may also need the
+accessory removed and re-paired. The `matter.factory_reset` action clears all
+Matter pairings; it preserves the ESPHome configuration and cover calibration.
 
-To use Matter and native ESPHome control together, enable the
-[API](https://esphome.io/components/api/), set `internal: true` on the backend,
-and add a `matter` cover:
-
-```yaml
-cover:
-  - platform: matter
-    name: Blind ESPHome
-    cover_id: blind_backend
-```
-
-The backend is hidden from Home Assistant; the new entity exposes its position,
-tilt, and movement state. Both Matter and native commands then use the same
-lift/tilt ordering and Stop handling. Home Assistant can use this entity through
-its ESPHome integration without joining a Matter fabric, including the normal
-tilt-open and tilt-close services.
-
-### Configuration variables
-
-- **cover_id** (**Required**, ID): The internal backend mapped to the Matter
-  endpoint above. Keep the endpoint mapped to the backend, not this new entity.
-- **matter_id** (*Optional*, ID): The Matter component. Automatically resolved
-  when omitted.
-- All other options from [Cover](https://esphome.io/components/cover/).
-  Give the new entity a different name from the backend so web requests can
-  distinguish them.
-
-This platform is included in the `matter` external component. Native control
-also works if Matter initialization fails, provided the backend is operational.
-
-## Lift, tilt, and Stop
-
-Lift and tilt run sequentially. A tilt requested during lift waits until lift
-finishes; further tilt requests replace the waiting target. Stop cancels the
-movement and any waiting tilt. A new movement requested after Stop can run.
-
-Automations can use the normal ESPHome cover actions on the native entity.
-If an automation stops the backend directly, cancel pending commands first:
-
-```yaml
-on_release:
-  - matter.cover.cancel_pending:
-      cover_id: blind_backend
-  - cover.stop: blind_backend
-```
-
-Use this order in every direct backend Stop path, including both button release
-handlers and Stop scripts. The cancellation action alone does not stop the
-motor. Without it, a Stop at the lift destination can look like normal completion
-and allow a waiting tilt to start. Stopping the native entity already handles
-this cancellation.
-
-## Position reporting
-
-Current positions update whenever the backend publishes state. Their accuracy
-and update frequency depend on the backend; time-based covers estimate position
-from the configured travel times.
-
-ESPHome uses `1.0` for open and `0.0` for closed. Matter's `Percent100ths`
-attributes use `0` for open and `10000` for closed. The component converts both
-lift and tilt values automatically. Check the physical slat orientation when
-calibrating tilt.
-
-Controller apps may display the target while the blind moves. Apple Home's
-detail slider has shown this behavior even when current-position reports were
-updating correctly. For development and hardware checks, see
-[cover testing](dev/cover-testing.md).
+See the [Wi-Fi test configuration](../tests/configs/esp32-window-covering.yaml)
+for a complete example using a simulated cover, or the
+[Thread configuration](../tests/configs/esp32-thread-window-covering.yaml).

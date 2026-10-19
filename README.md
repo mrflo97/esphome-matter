@@ -37,19 +37,28 @@ seconds before a command is successfully sent.
 
 So far, `ESP32-C3`, `ESP32-C5`, `ESP32-C6`, `ESP32-S3` and `ESP32-H2` have been tested and confirmed to work!
 
-# Commissioning
+# [Commissioning](docs/commissioning.md)
 
 Because ESPHome devices already have their Wi-Fi or Thread credentials from your YAML configuration, commissioning
 works differently than with most other Matter devices. You still need to commission the device to a Matter fabric, but
 this does not happen over BLE (bluetooth) like with most matter devices.
 
-After flashing, the device prints a setup code (`SetupQRCode`) to the logs on every boot:
+Add the following text sensor to your config to get the pairing code in Home Assistant:
+
+```yaml
+text_sensor:
+  - platform: matter
+    qr_code:
+      name: "Matter QR-code string"
+```
+
+Alternatively, read the setup code (`SetupQRCode`) from the logs after boot:
 
 ```
 [C][matter]: Matter:
 [C][matter]:   SetupQRCode: MT:Y.K904QI14-O992WI00
 [C][matter]:   QR URL: https://project-chip.github.io/connectedhomeip/qrcode.html?data=MT:Y.K904QI14-O992WI00
-[C][matter]:   Manual pairing code: 32552014321
+[C][matter]:   Manual pairing code: 3255-201-4321
 [C][matter]:   Commissioning window: open
 [C][matter]:   Fabrics: none
 ```
@@ -58,12 +67,8 @@ Copy the `SetupQRCode` or open the link and scan the QR-code to commission the d
 commissioning window remains open for only 15 minutes. A restart of the device will re-open the window if it hasn't
 joined any fabrics yet.
 
-To read the setup code in Home Assistant after boot, add a
-[Matter text sensor](docs/commissioning.md#setup-codes-in-home-assistant).
-
 Once the device has joined a fabric, the commissioning window won't be opened on restarts anymore. Matter controllers
 should be able to share the device. This generates a temporary commissioning code and re-opens the commissioning window.
-Alternatively, an [ESPHome button](docs/commissioning.md#commissioning-buttons) can open a window using the stored setup code.
 If you lose access to the Matter controller, you can do a Matter factory reset (see [Example config](#example-config)).
 
 ### Ecosystem specific settings
@@ -209,11 +214,8 @@ More information about endpoints and a full list of supported device types can b
 
 # Covers
 
-Existing ESPHome covers can be exposed to Matter with lift position, Stop, and
-optional tilt control for Venetian blinds. A native ESPHome cover entity is
-also available. See [covers](docs/covers.md) for configuration and local Stop
-handling, or the [Dashboard guide](docs/dashboard-covers.md) for the Shelly
-2PM Gen4 example.
+Existing ESPHome covers can also be exposed to Matter. See [covers](docs/covers.md)
+for lift, tilt, and native ESPHome API control.
 
 # Lights
 

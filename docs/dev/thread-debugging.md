@@ -60,4 +60,4 @@ ESPHome's SRP client.
 After switching from Wi-Fi to Thread, controllers may retain the old address
 or subscription. Check the new IPv6 service records and confirm the controller
 reconnects. If a cover connects but displays unexpected positions, see
-[cover reporting](../covers.md#position-reporting).
+[Covers](../covers.md).

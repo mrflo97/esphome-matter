@@ -11,13 +11,13 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <cstdio>
 #include <cstring>
 #include <esp_matter_client.h>
 #include <esp_random.h>
 #include <nvs.h>
 #include <string>
 
-#include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
 #ifdef USE_OPENTHREAD
 #include <app/server/Dnssd.h>
@@ -179,6 +179,9 @@ static void event_callback(const ChipDeviceEvent *event, intptr_t arg) {
     break;
   case chip::DeviceLayer::DeviceEventType::kFabricRemoved:
     ESP_LOGI(TAG_EVENT, "Fabric removed");
+#ifdef USE_TEXT_SENSOR
+    global_matter_component->schedule_fabric_sensor_update();
+#endif
     // TODO: reopen commissioning window?
     break;
   case chip::DeviceLayer::DeviceEventType::kFabricWillBeRemoved:
@@ -186,9 +189,15 @@ static void event_callback(const ChipDeviceEvent *event, intptr_t arg) {
     break;
   case chip::DeviceLayer::DeviceEventType::kFabricUpdated:
     ESP_LOGI(TAG_EVENT, "Fabric is updated");
+#ifdef USE_TEXT_SENSOR
+    global_matter_component->schedule_fabric_sensor_update();
+#endif
     break;
   case chip::DeviceLayer::DeviceEventType::kFabricCommitted:
     ESP_LOGI(TAG_EVENT, "Fabric is committed");
+#ifdef USE_TEXT_SENSOR
+    global_matter_component->schedule_fabric_sensor_update();
+#endif
     break;
   case chip::DeviceLayer::DeviceEventType::kDnssdRestartNeeded:
     ESP_LOGD(TAG_EVENT, "DNS-SD restart needed");
@@ -295,10 +304,6 @@ static void event_callback(const ChipDeviceEvent *event, intptr_t arg) {
 
 void MatterComponent::setup() {
   global_matter_component = this;
-  if (!this->validate_mappings_()) {
-    this->mark_failed();
-    return;
-  }
   uint16_t discriminator;
   uint32_t passcode;
   if (!load_or_generate_commissioning_data(discriminator, passcode)) {
@@ -309,14 +314,8 @@ void MatterComponent::setup() {
   this->passcode_ = passcode;
   this->generate_commissioning_codes_();
 
-#ifdef USE_MATTER_TEXT_SENSOR
-  if (this->manual_pairing_code_sensor_ != nullptr &&
-      !this->manual_pairing_code_.empty()) {
-    this->manual_pairing_code_sensor_->publish_state(this->manual_pairing_code_);
-  }
-  if (this->qr_code_sensor_ != nullptr && !this->qr_code_.empty()) {
-    this->qr_code_sensor_->publish_state(this->qr_code_);
-  }
+#ifdef USE_TEXT_SENSOR
+  this->publish_commissioning_code_sensors_();
 #endif
 
   // Always update device-name so it stays in sync if the ESPHome device name
@@ -382,19 +381,15 @@ void MatterComponent::setup() {
     this->mark_failed();
     return;
   }
+  ESP_LOGD(TAG, "Scheduled Thread Matter operational advertisement");
 #endif // USE_OPENTHREAD
 
   esp_matter::client::binding_manager_init();
   replay_attribute_triggers(this);
   this->initialize_endpoint_mappings_();
-  this->matter_started_ = true;
-}
-
-bool MatterComponent::validate_mappings_() {
-  bool valid = true;
-  for (auto *mapping : this->mappings_)
-    valid = mapping->validate() && valid;
-  return valid;
+#ifdef USE_TEXT_SENSOR
+  this->publish_fabric_sensors_();
+#endif
 }
 
 void MatterComponent::factory_reset() {
@@ -408,79 +403,6 @@ void MatterComponent::factory_reset() {
     }
   }
   App.safe_reboot();
-}
-
-void MatterComponent::open_commissioning_window(uint16_t timeout_seconds) {
-  if (!this->matter_started_) {
-    ESP_LOGW(TAG, "Cannot open commissioning window: Matter is not ready");
-    return;
-  }
-  if (timeout_seconds < 180 || timeout_seconds > 900) {
-    ESP_LOGW(TAG, "Commissioning timeout must be between 180 and 900 seconds");
-    return;
-  }
-
-  CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork(
-      [](intptr_t timeout) {
-        auto &server = chip::Server::GetInstance();
-        auto &manager = server.GetCommissioningWindowManager();
-        if (manager.IsCommissioningWindowOpen()) {
-          ESP_LOGI(TAG, "Commissioning window is already open; keeping the active "
-                        "window");
-          return;
-        }
-        // Opening can reset pairing state even on failure, so check first.
-        if (!server.GetFailSafeContext().IsFailSafeFullyDisarmed()) {
-          ESP_LOGW(TAG, "Cannot open commissioning window: commissioning is in "
-                        "progress");
-          return;
-        }
-#if defined(USE_OPENTHREAD) || defined(USE_WIFI) || defined(USE_ETHERNET)
-        constexpr auto advertisement =
-            chip::CommissioningWindowAdvertisement::kDnssdOnly;
-#else
-        constexpr auto advertisement =
-            chip::CommissioningWindowAdvertisement::kAllSupported;
-#endif
-        CHIP_ERROR open_error = manager.OpenBasicCommissioningWindow(
-            chip::System::Clock::Seconds32(static_cast<uint32_t>(timeout)),
-            advertisement);
-        if (open_error != CHIP_NO_ERROR) {
-          ESP_LOGW(TAG, "Failed to open commissioning window: 0x%08" PRIx32,
-                   static_cast<uint32_t>(open_error.AsInteger()));
-          return;
-        }
-        ESP_LOGI(TAG, "Commissioning window opened for %" PRIu32
-                     " seconds using the stored setup code",
-                 static_cast<uint32_t>(timeout));
-      },
-      static_cast<intptr_t>(timeout_seconds));
-  if (err != CHIP_NO_ERROR) {
-    ESP_LOGW(TAG, "Failed to schedule commissioning window opening: 0x%08" PRIx32,
-             static_cast<uint32_t>(err.AsInteger()));
-  }
-}
-
-void MatterComponent::close_commissioning_window() {
-  if (!this->matter_started_) {
-    ESP_LOGW(TAG, "Cannot close commissioning window: Matter is not ready");
-    return;
-  }
-  CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork(
-      [](intptr_t) {
-        auto &manager =
-            chip::Server::GetInstance().GetCommissioningWindowManager();
-        if (!manager.IsCommissioningWindowOpen()) {
-          ESP_LOGD(TAG, "Commissioning window is already closed");
-          return;
-        }
-        manager.CloseCommissioningWindow();
-      },
-      0);
-  if (err != CHIP_NO_ERROR) {
-    ESP_LOGW(TAG, "Failed to schedule commissioning window closing: 0x%08" PRIx32,
-             static_cast<uint32_t>(err.AsInteger()));
-  }
 }
 
 void MatterComponent::generate_commissioning_codes_() {
@@ -528,8 +450,9 @@ void MatterComponent::dump_config() {
         this->qr_code_.c_str());
   }
   if (!this->manual_pairing_code_.empty()) {
-    ESP_LOGCONFIG(TAG, "  Manual pairing code: %s",
-                  this->manual_pairing_code_.c_str());
+    ESP_LOGCONFIG(
+        TAG, "  Manual pairing code: %s",
+        format_manual_pairing_code(this->manual_pairing_code_).c_str());
   }
 
   chip::DeviceLayer::PlatformMgr().LockChipStack();

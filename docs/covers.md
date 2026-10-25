@@ -35,8 +35,9 @@ Backend state publications update Matter's current lift/tilt positions. ESPHome
 exposes one movement operation: it is reported on lift when present, or tilt
 for tilt-only covers, and Matter derives the overall status. Once the cover
 reports idle, its actual positions also update the Matter targets. ESPHome does
-not expose native command targets,
-so API or local destinations are not reported to Matter while moving.
+not expose native command targets. When an API or local movement runs against
+the Matter target's direction, the target is set to fully open or closed, so
+controllers show the correct direction until the cover stops.
 Initialization reports the existing state without moving the cover.
 
 ESPHome uses `1.0` for open and `0.0` for closed. Matter uses `0` for open and

@@ -126,8 +126,27 @@ void MatterCoverMapping::push_state_to_matter_() {
       operation = OperationalState::MovingDownOrClose;
     // ESPHome exposes one operation. Report it on lift, or tilt for tilt-only
     // covers; CHIP derives the overall status from its axis states.
-    OperationalStateSet(endpoint, this->has_lift_ ? OperationalStatus::kLift : OperationalStatus::kTilt,
-                        operation);
+    const auto axis = this->has_lift_ ? OperationalStatus::kLift : OperationalStatus::kTilt;
+    const auto &current = this->has_lift_ ? lift : tilt;
+    if (state.reconcile_targets && this->command_revision_.load() == state.command_revision &&
+        operation != OperationalState::Stall && !current.IsNull()) {
+      // Movements started outside Matter keep the previous target, which
+      // controllers use to show the direction. Point it at the end of travel.
+      chip::app::DataModel::Nullable<chip::Percent100ths> target;
+      if (this->has_lift_)
+        Attributes::TargetPositionLiftPercent100ths::Get(endpoint, target);
+      else
+        Attributes::TargetPositionTiltPercent100ths::Get(endpoint, target);
+      const bool opening = operation == OperationalState::MovingUpOrOpen;
+      if (target.IsNull() || (opening ? target.Value() > current.Value() : target.Value() < current.Value())) {
+        target.SetNonNull(opening ? 0 : 10000);
+        if (this->has_lift_)
+          Attributes::TargetPositionLiftPercent100ths::Set(endpoint, target);
+        else
+          Attributes::TargetPositionTiltPercent100ths::Set(endpoint, target);
+      }
+    }
+    OperationalStateSet(endpoint, axis, operation);
   });
   if (error != CHIP_NO_ERROR)
     ESP_LOGW(TAG, "Failed to schedule cover state update: %s", chip::ErrorStr(error));

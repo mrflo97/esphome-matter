@@ -61,6 +61,8 @@ int main() {
   chip::DeviceLayer::SystemLayer().run();
   assert(state.lift.Value() == 8000 && state.tilt.Value() == 2000);
   assert(state.operation == OperationalState::MovingDownOrClose);
+  // The stale opening target (5000) is pointed at the actual direction.
+  assert(state.lift_target.Value() == 10000);
   auto native_stop = backend.make_call();
   native_stop.set_stop(true).perform();
   chip::DeviceLayer::SystemLayer().run();
@@ -82,6 +84,7 @@ int main() {
   component.run();
   chip::DeviceLayer::SystemLayer().run();
   assert(backend.calls.back().position == 0.9f);
+  assert(state.lift_target.Value() == 1000);  // A Matter target in the moving direction is kept.
 
   backend.position = std::numeric_limits<float>::quiet_NaN();
   backend.publish_state();

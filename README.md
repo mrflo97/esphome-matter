@@ -288,8 +288,9 @@ matter.send_command: some_endpoint.level_control.stop_with_on_off
 
 - As this is based on [Espressif's SDK for Matter (esp-matter)](https://components.espressif.com/components/espressif/esp_matter/) any features/functions not supported there in upstream first can not be supported in this project.
 - BLE commissioning is currently broken and if it wasn't, it cannot be combined with the `api` component because of limitations in the ESPHome `network` component.
-- Mapped covers support lift positions with optional tilt. Absolute positions
-  and tilt-only mappings are unsupported. See [covers](docs/covers.md).
+- Mapped covers support lift and tilt positions, together or separately.
+  Absolute positions are unsupported because ESPHome covers report percentages.
+  See [covers](docs/covers.md).
 
 # See Also
 

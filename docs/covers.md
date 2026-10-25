@@ -20,7 +20,7 @@ Tilt-only covers can use `position_aware_tilt` alone. Absolute physical position
 are unsupported because ESPHome covers expose normalized percentages.
 
 `end_product_type` is optional: `roller_shade`, `interior_venetian_blind`, or
-`exterior_venetian_blind`. The default is `roller_shade` for lift-only mappings
+`exterior_venetian_blind`. The default is `roller_shade` for lift-only endpoints
 and `interior_venetian_blind` when tilt is enabled.
 
 Matter commands call the existing cover directly. The cover remains available

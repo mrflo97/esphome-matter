@@ -65,6 +65,18 @@ def test_cluster_features_are_resolved_with_device_features():
     assert "device_config_0.window_covering.type = 0x08" in generated
 
 
+def test_unmapped_endpoint_metadata():
+    def edit(raw):
+        endpoint = raw["matter"]["endpoints"]["1"]["window_covering"]
+        del endpoint["cover_id"]
+        endpoint["with_features"] = ["tilt"]
+
+    generated = generate(edit=edit)
+    assert "register_cover(simulated_blind, 1)" not in generated
+    assert "window_covering::config_t device_config_0{0x0C}" in generated
+    assert "device_config_0.window_covering.type = 0x07" in generated
+
+
 def test_explicit_end_product_type():
     def edit(raw):
         raw["matter"]["endpoints"]["1"]["window_covering"]["end_product_type"] = (

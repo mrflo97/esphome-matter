@@ -401,25 +401,23 @@ class Endpoint:
     def _make_device_type_lines(self, device_type: DeviceType, index: int):
         config_var = f"device_config_{index}"
         device_config = self._config[device_type.conf_key]
-        constructor_args = ""
-        covering_type = None
         if device_type.name == "window_covering":
-            if CONF_COVER_ID in device_config:
-                features = self._cluster_configs["WindowCovering"].enabled_features
-                # Matter Type: roller shade, tilt-only blind, or lift-and-tilt blind.
-                if features.get("Tilt"):
-                    covering_type = 0x08 if features.get("Lift") else 0x07
-                else:
-                    covering_type = 0x00
-                product_value = 0x0C if features.get("Tilt") else 0x00
-                constructor_args = f"0x{product_value:02X}"
+            features = self._cluster_configs["WindowCovering"].enabled_features
+            lift, tilt = features.get("Lift"), features.get("Tilt")
+            # Matter Type: roller shade, tilt-only blind, or lift-and-tilt blind.
+            covering_type = (0x08 if lift else 0x07) if tilt else 0x00
+            # EndProductType: interior venetian blind when tilting, else roller shade.
+            end_product_type = 0x0C if tilt else 0x00
             if CONF_END_PRODUCT_TYPE in device_config:
-                constructor_args = f"0x{device_config[CONF_END_PRODUCT_TYPE].enum_value:02X}"
-        lines = [
-            f"esp_matter::endpoint::{device_type.namespace}::config_t {config_var}{{{constructor_args}}};"
-        ]
-        if covering_type is not None:
-            lines.append(f"{config_var}.window_covering.type = 0x{covering_type:02X};")
+                end_product_type = device_config[CONF_END_PRODUCT_TYPE].enum_value
+            lines = [
+                f"esp_matter::endpoint::{device_type.namespace}::config_t {config_var}{{0x{end_product_type:02X}}};",
+                f"{config_var}.window_covering.type = 0x{covering_type:02X};",
+            ]
+        else:
+            lines = [
+                f"esp_matter::endpoint::{device_type.namespace}::config_t {config_var}{{}};"
+            ]
 
         if min_level := device_config.get(CONF_MIN_LEVEL):
             lines.append(f"{config_var}.level_control.min_level = {min_level};")

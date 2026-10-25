@@ -43,11 +43,9 @@ ESPHome uses `1.0` for open and `0.0` for closed. Matter uses `0` for open and
 `10000` for closed. Both lift and tilt percentages are converted automatically;
 verify the physical slat orientation for the selected backend.
 
-If commands stop working after a firmware update, first confirm that the device
-still advertises its operational `_matter._tcp` service; see
-[Thread debugging](dev/thread-debugging.md#commissioned-devices-after-reboot).
-A controller that cached an incompatible accessory model may also need the
-accessory removed and re-paired. The `matter.factory_reset` action clears all
+If commands stop working after a firmware update that changed the cover's
+features, the controller may have cached the old accessory model. Remove the
+accessory and pair it again. The `matter.factory_reset` action clears all
 Matter pairings; it preserves the ESPHome configuration and cover calibration.
 
 See the [Wi-Fi test configuration](../tests/configs/esp32-window-covering.yaml)

@@ -54,17 +54,6 @@ def test_single_axis_metadata(features, expected_type, expected_product):
     assert f"device_config_0.window_covering.type = {expected_type}" in generated
 
 
-def test_cluster_features_are_resolved_with_device_features():
-    def edit(raw):
-        endpoint = raw["matter"]["endpoints"]["1"]
-        endpoint["window_covering"]["with_features"] = ["position_aware_lift"]
-        endpoint["clusters"] = {"window_covering": {"with_features": ["position_aware_tilt"]}}
-
-    generated = generate(edit=edit)
-    assert "position_aware_tilt::add" in generated
-    assert "device_config_0.window_covering.type = 0x08" in generated
-
-
 def test_unmapped_endpoint_metadata():
     def edit(raw):
         endpoint = raw["matter"]["endpoints"]["1"]["window_covering"]

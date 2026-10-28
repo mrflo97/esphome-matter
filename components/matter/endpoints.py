@@ -17,7 +17,7 @@ from esphome.types import ConfigType
 from .actions import get_attribute_from_config, get_event_from_config
 from .const import *
 from .data_model.attributes import Attribute, SensorAttribute, attribute_value_type
-from .data_model.clusters import CLUSTERS, CLUSTERS_BY_CONF_KEY, CLUSTERS_BY_NAME, Cluster
+from .data_model.clusters import CLUSTERS, CLUSTERS_BY_NAME, Cluster
 from .data_model.conformance import (
     ConformanceDisposition,
     ConformanceError,
@@ -194,7 +194,7 @@ class Endpoint:
                 usages_by_cluster[cluster.id].append(usage)
 
         for cluster_name in self._config[CONF_CLUSTERS]:
-            cluster = CLUSTERS_BY_CONF_KEY[cluster_name]
+            cluster = CLUSTERS_BY_NAME[cluster_name]
             clusters_by_id[cluster.id] = cluster
 
         for config_key, device_config in self._config.items():
@@ -248,22 +248,24 @@ class Endpoint:
                 )
 
             resulting_codes = enabled_codes | inferred_codes
-            if cluster.name == "WindowCovering" and CONF_COVER_ID in self._config.get(
-                "window_covering", {}
+            # ESPHome covers report normalized positions, so mapping one needs
+            # position awareness per axis. Adapter limitation, not conformance.
+            if (
+                cluster.name == "WindowCovering"
+                and CONF_COVER_ID in self._config.get("window_covering", {})
+                and (
+                    "ABS" in resulting_codes
+                    or not resulting_codes & {"PA_LF", "PA_TL"}
+                    or any(
+                        axis in resulting_codes and f"PA_{axis}" not in resulting_codes
+                        for axis in ("LF", "TL")
+                    )
+                )
             ):
-                # ESPHome exposes percentage positions, not physical lengths.
-                if "ABS" in resulting_codes:
-                    raise cv.Invalid(
-                        "Mapped ESPHome covers do not support absolute_position"
-                    )
-                if not resulting_codes & {"PA_LF", "PA_TL"} or any(
-                    axis in resulting_codes and f"PA_{axis}" not in resulting_codes
-                    for axis in ("LF", "TL")
-                ):
-                    raise cv.Invalid(
-                        "Mapped ESPHome covers require position_aware_lift or "
-                        "position_aware_tilt for each enabled axis"
-                    )
+                raise cv.Invalid(
+                    "Mapped ESPHome covers need position_aware_lift or "
+                    "position_aware_tilt for each enabled axis and no absolute_position"
+                )
             choices = defaultdict(list)
             for feature in cluster.features:
                 if feature.conformance is not None and feature.conformance.choice:
@@ -317,9 +319,9 @@ class Endpoint:
                 await self._configure_device_type(var, device_type, device_config)
 
         for cluster_name, config in self._config[CONF_CLUSTERS].items():
-            cluster = CLUSTERS_BY_CONF_KEY[cluster_name]
+            cluster = CLUSTERS_BY_NAME[cluster_name]
             self.enabled_sdkconfig_options.add(cluster.sdkconfig_option)
-            cluster_config = self._cluster_configs[cluster.name]
+            cluster_config = self._cluster_configs[cluster_name]
             for configured_feature in config.get(CONF_WITH_FEATURES, ()):
                 if feature := cluster.get_feature(configured_feature):
                     cluster_config.enabled_features[feature.name] = True
@@ -594,17 +596,9 @@ class Endpoint:
                 )
             )
             for feature in direct_features:
-                # These features update persisted ConfigStatus. An unchanged
-                # value returns NOT_FINISHED even though the feature was added.
-                failed_if = "err != ESP_OK"
-                if cluster.name == "WindowCovering" and feature.name in (
-                    "PositionAwareLift",
-                    "PositionAwareTilt",
-                ):
-                    failed_if += " && err != ESP_ERR_NOT_FINISHED"
                 lines.extend(
                     (
-                        f"if (auto err = esphome::matter::add_feature({cluster_var}, esp_matter::cluster::{cluster.espm_namespace}::feature::{feature.namespace}::add); {failed_if})",
+                        f"if (esphome::matter::add_feature({cluster_var}, esp_matter::cluster::{cluster.espm_namespace}::feature::{feature.namespace}::add) != ESP_OK)",
                         "  return false;",
                     )
                 )

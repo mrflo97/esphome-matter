@@ -14,8 +14,7 @@ matter:
 
 Use the ID of a cover that reports position and supports Stop. For tilt control,
 add `position_aware_tilt` and use a cover that supports tilt. The shared Matter
-conformance resolver enables the corresponding `lift` and `tilt` features;
-features can also be declared under the endpoint's `clusters.window_covering`.
+conformance resolver enables the corresponding `lift` and `tilt` features.
 Tilt-only covers can use `position_aware_tilt` alone. Absolute physical positions
 are unsupported because ESPHome covers expose normalized percentages.
 

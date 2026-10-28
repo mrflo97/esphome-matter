@@ -92,6 +92,8 @@ void MatterCoverMapping::push_state_to_matter_() {
     uint8_t operation;
     bool reconcile_targets;
   };
+  // Targets are only reconciled by a publication newer than the applied
+  // command; the CHIP task re-checks because it runs after this capture.
   const uint32_t revision = this->command_revision_.load();
   const State state{this->cover_->position, this->cover_->tilt, revision,
                     static_cast<uint8_t>(this->cover_->current_operation),

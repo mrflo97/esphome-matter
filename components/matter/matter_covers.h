@@ -27,8 +27,9 @@ class MatterCoverMapping : public MatterEndpointMappingBase,
   cover::Cover *cover_;
   bool has_lift_{false};
   bool has_tilt_{false};
-  // Protect target reporting from a state publication preceding a new command.
-  // Every command is still forwarded directly to the backend in arrival order.
+  // Only the newest command may reconcile targets, so a state publication
+  // captured before a newer command cannot overwrite that command's target.
+  // Commands themselves are still forwarded to the backend in arrival order.
   std::atomic<uint32_t> command_revision_{0};
   uint32_t applied_command_revision_{0};  // ESPHome main loop only.
 };

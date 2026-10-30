@@ -28,6 +28,8 @@
 #endif // CHIP_DEVICE_CONFIG_ENABLE_THREAD
 #include <lib/support/Base64.h>
 #ifdef USE_OPENTHREAD
+#include <esp_netif.h>
+#include <esp_openthread_netif_glue.h>
 #include <openthread/ip6.h>
 #endif // USE_OPENTHREAD
 #include <setup_payload/ManualSetupPayloadGenerator.h>
@@ -354,6 +356,13 @@ void MatterComponent::setup() {
                   "connectedhomeip ThreadStackManager");
     this->mark_failed();
     return;
+  }
+  // TEST: ESPHome 2026.10 no longer makes the Thread netif the default route.
+  if (esp_netif_t *netif = esp_openthread_get_netif(); netif != nullptr) {
+    esp_err_t netif_err = esp_netif_set_default_netif(netif);
+    ESP_LOGI(TAG, "Set Thread netif as default route: %s", esp_err_to_name(netif_err));
+  } else {
+    ESP_LOGW(TAG, "Thread netif not available; default route unchanged");
   }
 #endif // USE_OPENTHREAD
 
